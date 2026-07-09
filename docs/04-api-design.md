@@ -41,20 +41,19 @@
 | 401 | `UNAUTHENTICATED` | 未登录 |
 | 403 | `FORBIDDEN` | 无权限 |
 | 404 | `MARKET_NOT_FOUND` | 资源不存在 |
-| 409 | `MARKET_CLOSED` / `STALE_PRICE` | 状态冲突（市场已关/价格过期） |
+| 409 | `MARKET_CLOSED` / `STALE_PRICE` / `USERNAME_TAKEN` | 状态冲突（市场已关/价格过期/昵称已占用） |
 | 422 | `VALIDATION_ERROR` / `INSUFFICIENT_BALANCE` / `INSUFFICIENT_SHARES` | 语义校验失败 |
 | 429 | `RATE_LIMITED` | 限流 |
 | 500 | `INTERNAL_ERROR` | 服务端错误（不泄露内部细节） |
 
 ## 2. 鉴权
 
-- **MVP**：邮箱 + 密码（`passwordHash` 用 bcrypt/argon2），会话用 **HTTP-only Cookie**（session-based）。理由：浏览器优先、CSRF 可控、实现简单。见 [ADR-001](./decisions/ADR-001-tech-stack.md)。
-- 也可接第三方 OAuth（GitHub/Google），Post-MVP。
+- **身份**：**昵称 + 密码**（`passwordHash` 用 bcrypt/argon2），昵称唯一去重，无需邮箱。会话用 **HTTP-only Cookie**（session-based）。理由：浏览器优先、CSRF 可控、免注册门槛。见 [ADR-001](./decisions/ADR-001-tech-stack.md)、[ADR-005](./decisions/ADR-005-product-rules.md)。
 - 所有写端点要求已登录会话；用户身份从会话解析，**绝不信任 body 里的 userId**。
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
-| `/api/auth/register` | POST | 注册，创建用户并发放初始 10,000 积分 |
+| `/api/auth/register` | POST | 注册（昵称+密码，昵称去重），创建用户并发放初始 10,000 积分 |
 | `/api/auth/login` | POST | 登录，设置会话 Cookie |
 | `/api/auth/logout` | POST | 登出，清除会话 |
 | `/api/auth/me` | GET | 当前用户信息（余额、净值） |
@@ -62,12 +61,13 @@
 **注册请求：**
 ```jsonc
 POST /api/auth/register
-{ "username": "alice", "email": "a@x.com", "password": "..." }
+{ "username": "alice", "password": "..." }
 ```
 **响应 201：**
 ```jsonc
 { "data": { "id": "usr_...", "username": "alice", "balance": 10000000 } }  // 厘 = 10000 积分
 ```
+**昵称冲突：** 返回 `409 USERNAME_TAKEN`。
 
 ## 3. 市场端点（读，源自镜像数据）
 
@@ -114,7 +114,7 @@ GET /api/markets/:id
 ```
 GET /api/markets/:id/history?interval=1w&outcome=0
 ```
-返回本站缓存或代理的 CLOB 历史价（见 [03 §4](./03-polymarket-integration.md#4-clob-api--历史价格走势图)）。
+返回本站缓存或代理的 CLOB 历史价（见 [03 §4](./03-polymarket-integration.md#4-clob-api-历史价格走势图)）。
 ```jsonc
 { "data": { "interval": "1w", "points": [ { "t": 1783504805, "priceBps": 5150 }, ... ] } }
 ```
@@ -141,7 +141,7 @@ POST /api/trades
 }}
 ```
 
-> **不接受前端传入价格**。若前端展示价与成交价偏差超过容忍阈值，返回 `409 STALE_PRICE`，前端提示重新确认（滑点保护，见 [05 §5](./05-trading-and-settlement.md#5-边界与异常)）。
+> **不接受前端传入价格**。若前端展示价与成交价偏差超过容忍阈值，返回 `409 STALE_PRICE`，前端提示重新确认（滑点保护，见 [05 §5](./05-trading-and-settlement.md#6-边界与异常)）。
 
 ### 4.2 卖出
 
@@ -175,24 +175,22 @@ GET /api/trades?page=1&pageSize=20
 ## 6. 排行榜端点
 
 ```
-GET /api/leaderboard?metric=networth&page=1&pageSize=50
+GET /api/leaderboard?page=1&pageSize=50
 ```
 
-| query | 说明 |
-|---|---|
-| `metric` | `networth`（净值，默认）/ `roi`（收益率）/ `realized`（已实现余额） |
+> **单一口径**：仅按积分净值（`networth = balance + Σ未结算持仓市值`）排序（决策 Q6）。不提供 ROI/已实现等多口径——积分只发不补，净值即公平基准。
 
 ```jsonc
 {
   "data": [
     { "rank": 1, "userId": "usr_1", "username": "alice", "avatarUrl": "...",
-      "networth": 18420000, "roi": 8420, "positionsValue": 8920000, "balance": 9500000 }
+      "networth": 18420000, "positionsValue": 8920000, "balance": 9500000 }
   ],
   "pagination": { "page": 1, "pageSize": 50, "totalItems": 1240, "totalPages": 25 },
-  "meta": { "me": { "rank": 87, "networth": 12300000, "roi": 2300 } }  // 当前用户自己的排名
+  "meta": { "me": { "rank": 87, "networth": 12300000 } }  // 当前用户自己的排名
 }
 ```
-- 净值计算见 [05 §4](./05-trading-and-settlement.md#4-净值与排行榜计算)。`roi` 用基点（8420 = +84.2%）。
+- 净值计算见 [05 §4](./05-trading-and-settlement.md#4-净值与排行榜计算)。金额单位为厘。
 
 ## 7. 内部/受保护端点（Cron）
 
@@ -207,7 +205,7 @@ GET /api/leaderboard?metric=networth&page=1&pageSize=50
 ## 8. 契约类型（TypeScript 摘要）
 
 ```typescript
-type OutcomeIndex = 0 | 1;                    // MVP 二元市场
+type OutcomeIndex = number;                   // MVP 仅取 0|1（二元）；用 number 预留多结果扩展
 type Bps = number;                            // 0..10000
 type Milli = number;                          // 厘 / 厘份（整数）
 

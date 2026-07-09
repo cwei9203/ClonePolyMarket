@@ -16,8 +16,8 @@ erDiagram
 
     User {
         string id PK
-        string username
-        string email
+        string username "唯一,去重"
+        string passwordHash
         string avatarUrl
         bigint balance "积分,单位:厘"
         datetime createdAt
@@ -32,6 +32,7 @@ erDiagram
         string imageUrl
         datetime closeAt
         boolean closed
+        boolean voided "50-50/作废退回"
         int resolvedOutcomeIndex "null=未结算"
         datetime syncedAt
     }
@@ -85,8 +86,7 @@ erDiagram
 | 字段 | 类型 | 约束 / 默认 | 说明 |
 |---|---|---|---|
 | `id` | String (cuid) | PK | 用户唯一 ID |
-| `username` | String | UNIQUE, NOT NULL | 显示名（排行榜可见） |
-| `email` | String | UNIQUE | 登录标识（若用邮箱登录） |
+| `username` | String | UNIQUE, NOT NULL | 昵称，登录标识 + 排行榜显示名，**唯一去重** |
 | `passwordHash` | String | | 见 [04 鉴权](./04-api-design.md#2-鉴权) |
 | `avatarUrl` | String | nullable | 头像 |
 | `balance` | BigInt | DEFAULT `10_000_000` | **可用**积分余额（厘）。初始 10,000 积分。 |
@@ -100,7 +100,7 @@ erDiagram
 | `conditionId` | String | UNIQUE | 链上 condition id |
 | `question` | String | | 市场问题 |
 | `description` | String | Text | 结算规则等 |
-| `outcomes` | Json | | `["Yes","No"]`（源为字符串，同步时 parse） |
+| `outcomes` | Json | | 结果数组（源为字符串，同步时 parse）。MVP 恒为 `["Yes","No"]`（2 项）；变长数组预留多结果扩展 |
 | `clobTokenIds` | Json | | `[yesTokenId, noTokenId]`，用于查历史价 |
 | `imageUrl` | String | nullable | 卡片配图 |
 | `lastPrices` | Json | | 最新镜像赔率 `["0.515","0.485"]` → 也冗余存 `lastPriceBps: [5150,4850]` |
@@ -108,7 +108,8 @@ erDiagram
 | `closeAt` | DateTime | | `endDate` |
 | `active` | Boolean | | 是否活跃 |
 | `closed` | Boolean | DEFAULT false | Polymarket 是否已关闭 |
-| `resolvedOutcomeIndex` | Int | nullable | 结算获胜结果索引；`null`=未结算 |
+| `voided` | Boolean | DEFAULT false | 是否按 VOID 全额退回结算（50-50/作废，见 [05 §5.3](./05-trading-and-settlement.md#53-void-特殊结算全额退回)） |
+| `resolvedOutcomeIndex` | Int | nullable | 正常结算获胜索引；`null`=未结算或 VOID |
 | `resolvedAt` | DateTime | nullable | 本站完成结算的时间 |
 | `syncedAt` | DateTime | | 上次同步时间 |
 
@@ -119,7 +120,7 @@ erDiagram
 | `id` | String | PK | |
 | `userId` | String | FK → users | |
 | `marketId` | String | FK → markets | |
-| `outcomeIndex` | Int | | `0`=Yes, `1`=No |
+| `outcomeIndex` | Int | | 结果索引。MVP 二元：`0`=Yes, `1`=No。用 `Int`（非布尔）预留多结果扩展 |
 | `shares` | BigInt | DEFAULT 0 | 持有份额（厘份），`> 0` |
 | `costBasis` | BigInt | DEFAULT 0 | 累计买入成本（厘），用于算平均成本与盈亏 |
 | `updatedAt` | DateTime | | |
@@ -152,7 +153,7 @@ erDiagram
 | `prices` | Json | 快照时各结果价格 |
 | `capturedAt` | DateTime | 抓取时间 |
 
-> 用于本站自绘走势图（也可直接用 Polymarket `prices-history`，见 [03](./03-polymarket-integration.md#4-历史价格)）。可按市场关闭后归档/清理。
+> 用于本站自绘走势图（也可直接用 Polymarket `prices-history`，见 [03](./03-polymarket-integration.md#4-clob-api-历史价格走势图)）。可按市场关闭后归档/清理。
 
 ## 4. 核心不变量
 
@@ -163,8 +164,8 @@ erDiagram
 $$\underbrace{\sum_{u} \text{balance}_u}_{\text{可用余额}} \;+\; \underbrace{\sum_{p} \text{shares}_p \times \text{price}_p}_{\text{持仓当前市值}} \;=\; \text{总净值}$$
 
 - 下注/卖出**不创造也不销毁**积分，只在「余额 ↔ 持仓市值」之间转移。
-- 唯一的积分**发行**来源：新用户注册 +10,000（以及后续可选的签到补给）。
-- 唯一的积分**再分配**：结算——失败方的持仓价值转移给获胜方（本质上，买入时锁定的成本决定盈亏）。
+- 唯一的积分**发行**来源：新用户注册 +10,000。**无任何补给/重置**（决策 Q4）——积分只发不补，用完即止。
+- 积分**再分配**：正常结算（失败方成本转移给获胜方）；**VOID 结算**则把成本全额退回原用户余额（不再分配，见 [05 §5.3](./05-trading-and-settlement.md#53-void-特殊结算全额退回)）。
 
 ### INV-2 · 事务原子性
 
@@ -181,7 +182,7 @@ $$\underbrace{\sum_{u} \text{balance}_u}_{\text{可用余额}} \;+\; \underbrace
 
 ### INV-5 · 结算幂等
 
-结算流程对同一市场重复执行必须幂等：以 `market.resolvedOutcomeIndex != null` 为已结算标志，二次运行直接跳过，防止重复赔付。
+结算流程对同一市场重复执行必须幂等：以 `resolvedOutcomeIndex != null`（正常）或 `voided == true`（VOID）为已结算标志，二次运行直接跳过，防止重复赔付/退款。
 
 ## 5. 索引与查询模式
 
@@ -200,7 +201,7 @@ $$\underbrace{\sum_{u} \text{balance}_u}_{\text{可用余额}} \;+\; \underbrace
 |---|---|
 | 已结算市场 | 保留（用于历史战绩展示）；`closed=true` 从活跃列表过滤。 |
 | `price_snapshots` | 市场结算后可归档/降采样，避免无限膨胀。 |
-| 用户破产（余额=0 且无持仓） | MVP 保留；后续可选「破产重置」补给（见 [08](./08-roadmap-and-open-questions.md)）。 |
+| 用户破产（余额=0 且无持仓） | 永久保留，净值 0 垫底排名。**无破产重置/补给**（决策 Q4）；用户可另注册新号。 |
 
 ---
 

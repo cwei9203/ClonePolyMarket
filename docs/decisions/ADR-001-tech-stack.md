@@ -13,7 +13,7 @@ ClonePolyMarket 需要：前端渲染市场/排行榜、后端处理下注与结
 - **全栈框架**：Next.js（App Router）+ TypeScript。前端 SSR + 后端 Route Handlers 一体，Serverless 部署友好。
 - **数据库**：PostgreSQL。
 - **ORM**：Prisma（类型安全 + migration 管理）。
-- **鉴权**：MVP 用邮箱密码 + HTTP-only Cookie 会话。
+- **鉴权**：MVP 用**昵称 + 密码**（昵称唯一去重，无需邮箱）+ HTTP-only Cookie 会话。详见 [ADR-005](./ADR-005-product-rules.md)。
 - **部署**：Vercel + 托管 Postgres（Neon / Supabase）+ 外部 Cron。
 
 ## Alternatives Considered

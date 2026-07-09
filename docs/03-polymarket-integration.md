@@ -77,8 +77,9 @@ GET https://gamma-api.polymarket.com/events?active=true&closed=false&limit=50
 | `closed == false` | 仍在交易 | 不结算，继续镜像赔率 |
 | `closed == true` 且 `outcomePrices == ["1","0"]` | **Yes 获胜** | 结算：`resolvedOutcomeIndex = 0` |
 | `closed == true` 且 `outcomePrices == ["0","1"]` | **No 获胜** | 结算：`resolvedOutcomeIndex = 1` |
-| `closed == true` 且 `outcomePrices == ["0.5","0.5"]` | 50-50 特殊结算 | 见[开放问题 Q3](./08-roadmap-and-open-questions.md)——按比例赔付 |
+| `closed == true` 且 `outcomePrices == ["0.5","0.5"]` | 50-50/无明确赢家 | **VOID**：全额退回成本（[05 §5.3](./05-trading-and-settlement.md#53-void-特殊结算全额退回)） |
 | `umaResolutionStatus == "proposed"` | 结果提议中、未最终确定 | **暂不结算**，等待 `resolved` |
+| `closed == true` 且市场被作废 / `umaResolutionStatuses` 指示无效 | 作废 | **VOID**：全额退回成本 |
 
 > **稳健判定**：以 `closed == true` **且** `outcomePrices` 中出现一个 `≥ 0.99` 的值作为「已确定」信号；否则视为未定，下周期重试。避免在 `proposed` 阶段过早结算。实测已结算样本：Kraken IPO 市场 `closed:true, outcomePrices:["0","1"]`。
 
@@ -108,7 +109,7 @@ GET https://clob.polymarket.com/prices-history?market={clobTokenId}&interval={in
 |---|---|---|---|---|
 | 市场目录 | 5 min | `/markets?active=true&closed=false` 分页 | upsert `markets` | [01 §2.1](./01-architecture.md#21-同步服务sync-worker) |
 | 赔率刷新 | 30 s | `/markets?closed=false` 批量 | `markets.lastPrices` + `price_snapshots` | |
-| 结算检测 | 60 s | `/markets/{id}`（仅有本站持仓的市场） | 触发[结算](./05-trading-and-settlement.md#3-结算) | |
+| 结算检测 | 60 s | `/markets/{id}`（仅有本站持仓的市场） | 触发[结算](./05-trading-and-settlement.md#5-结算) | |
 | 历史价缓存 | 按需/15 min | `/prices-history` | `price_history` 缓存 | |
 
 ### 5.1 客户端封装（`src/lib/polymarket/`）
@@ -139,6 +140,17 @@ interface NormalizedMarket {
 }
 ```
 
+### 5.2 仅镜像二元市场
+
+> 决策 Q1（[08 §4](./08-roadmap-and-open-questions.md#4-已确定的产品决策)）：MVP 仅支持二元（Yes/No）市场。
+
+同步落库前过滤：
+
+- 丢弃 `parse(outcomes).length != 2` 的市场（多选一、多结果 event 子项按需拆分，MVP 不入库）。
+- 仅保留 `outcomes` 规范化为恰好两个结果、`outcomePrices` 两个价格的市场。
+
+**预留扩展**：数据模型的 `position.outcomeIndex` 用 `Int`（非 `0|1` 布尔），`market.outcomes` 存变长数组，结算逻辑按「获胜索引」而非「Yes/No」硬编码——Post-MVP 放开过滤即可支持多结果，无需改表结构。见 [ADR-005](./decisions/ADR-005-product-rules.md)。
+
 ## 6. 容错与校验（把外部数据当不可信输入）
 
 > 依据接口设计原则：**第三方 API 响应是不可信数据，使用前必须校验形状与内容。**
@@ -148,10 +160,10 @@ interface NormalizedMarket {
 | 字段缺失/类型异常 | 用 schema（如 zod）在 `polymarket/` 边界校验；解析失败的市场跳过并记日志，不落库脏数据。 |
 | `outcomes`/`prices` 非法 JSON | try-parse，失败即丢弃该条。 |
 | API 超时/5xx | 指数退避重试（如 3 次）；仍失败则本周期保留旧快照。 |
-| API 长时间不可用 | 前端标记「赔率更新中」，`syncedAt` 超过阈值（如 5 min）则**禁用下注**（见 [05 §5](./05-trading-and-settlement.md#5-边界与异常)）。 |
+| API 长时间不可用 | 前端标记「赔率更新中」，`syncedAt` 超过阈值（如 5 min）则**禁用下注**（见 [05 §5](./05-trading-and-settlement.md#6-边界与异常)）。 |
 | 限流 | 集中批量拉取；如遇 429，退避并降低频率。 |
 | 价格越界 | 校验 $p \in [0,1]$，异常值丢弃。 |
-| 非二元市场 | MVP 仅支持二元（Yes/No）市场；`outcomes.length != 2` 的市场过滤掉（见[开放问题 Q1](./08-roadmap-and-open-questions.md)）。 |
+| 非二元市场 | 同步落库前过滤 `outcomes.length != 2`（决策 Q1，见 [§5.2](#52-仅镜像二元市场)）。 |
 
 ## 7. 合规与归属
 

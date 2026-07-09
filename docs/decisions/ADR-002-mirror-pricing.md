@@ -34,4 +34,5 @@ Accepted
   - 本站「市场」不因本站用户行为波动（价格外生）。娱乐场景可接受，甚至更爽。
   - 强依赖 Polymarket API 可用性 → 需容错与降级（见 [03 §6](../03-polymarket-integration.md#6-容错与校验把外部数据当不可信输入)）。
   - 赔率有同步延迟（≤ 一个同步周期）→ 需滑点/过期保护（见 [05 §6](../05-trading-and-settlement.md#6-边界与异常)）。
+  - 特殊结算（50-50 / 作废）无「获胜方」→ 本站按 **VOID 全额退回成本**处理（决策 Q3，见 [05 §5.3](../05-trading-and-settlement.md#53-void-特殊结算全额退回)）。
 - 因价格外生，无需在下注时更新市场状态，交易事务只动 `user` + `position` + `trade`（见 [05 §3](../05-trading-and-settlement.md#3-交易流程)）。

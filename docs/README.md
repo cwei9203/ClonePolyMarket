@@ -28,6 +28,7 @@
 | [ADR-002](./decisions/ADR-002-mirror-pricing.md) | 镜像 Polymarket 赔率，而非自建做市 |
 | [ADR-003](./decisions/ADR-003-frontend-stack.md) | Tailwind + shadcn/ui + 深色终端风设计系统 |
 | [ADR-004](./decisions/ADR-004-sync-scheduling.md) | 外部 Cron → 受保护端点的同步调度 |
+| [ADR-005](./decisions/ADR-005-product-rules.md) | 娱乐盘产品规则（昵称账号、积分只发不补、二元市场、VOID 结算、净值排行榜） |
 
 ## 三条贯穿全文的核心约束
 
@@ -39,4 +40,4 @@
 
 📐 **方案设计阶段**。尚未编码。实现按 [08 里程碑](./08-roadmap-and-open-questions.md#1-实现里程碑建议顺序) M0→M6 推进。
 
-有 [8 个开放问题](./08-roadmap-and-open-questions.md#4-开放问题需产品决策) 需在开工前确认（均已给出建议默认值）。
+[8 项产品决策](./08-roadmap-and-open-questions.md#4-已确定的产品决策) 已确定（汇总见 [ADR-005](./decisions/ADR-005-product-rules.md)）：昵称+密码去重注册、积分只发不补、仅二元市场（预留多结果扩展）、前端轮询、VOID 全额退回、无手续费、排行榜按积分净值、全量镜像热度排序。

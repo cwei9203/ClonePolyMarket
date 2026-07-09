@@ -28,7 +28,7 @@ $$\text{shares} = \left\lfloor \frac{\text{amount} \times 1000 \times 10000}{\te
 > $\text{shares} = \lfloor 500000 \times 10000 / 5150 \rfloor = 970873$ 厘份 ≈ 970.87 份。
 > 结算若获胜，赔付 $970873$ 厘份 × 1 积分/份 = `970873` 厘 ≈ 970.87 积分（相对 500 花费，约 +94%）。
 
-**舍入规则**：份额向下取整（floor）。用户略微「少拿」零头，系统永不多发——保证 [INV-1 积分守恒](./02-data-model.md#inv-1--积分守恒) 只会保守偏差，绝不泄漏。
+**舍入规则**：份额向下取整（floor）。用户略微「少拿」零头，系统永不多发——保证 [INV-1 积分守恒](./02-data-model.md#inv-1-积分守恒) 只会保守偏差，绝不泄漏。
 
 ### 2.2 卖出所得计算
 
@@ -94,17 +94,15 @@ COMMIT
 
 ## 4. 净值与排行榜计算
 
+> **排行榜口径**：仅按积分净值单一排序（决策 Q6，[08 §4](./08-roadmap-and-open-questions.md#4-已确定的产品决策)）。不做 ROI/已实现多口径——因积分只发不补（每人固定初始 10,000），净值本身已是公平的对比基准。
+
 **用户净值（Net Worth）**：
 
 $$\text{networth}_u = \text{balance}_u + \sum_{p \in \text{positions}_u} \left\lfloor \frac{\text{shares}_p \times \text{pBps}_{p}}{10000} \right\rfloor$$
 
 其中 `pBps` 取该市场当前镜像赔率；**已结算市场**的持仓价值已在结算时并入 balance，故只累加**未结算**持仓。
 
-**收益率（ROI）**：
-
-$$\text{roi}_u = \frac{\text{networth}_u - \text{INITIAL}}{\text{INITIAL}} \quad (\text{INITIAL} = 10{,}000\ \text{积分})$$
-
-> 若引入签到补给等额外发行，ROI 分母需改为「累计发放积分」而非固定初始值，否则领补给会虚高 ROI（见[开放问题 Q4](./08-roadmap-and-open-questions.md)）。
+> 因**积分只发不补**（决策 Q4），无需 ROI 口径，也不存在「领补给虚高 ROI」的问题。破产（余额 0 且无持仓）的用户净值为 0，排名垫底；用户可另注册新号重新开始。
 
 ### 4.1 计算策略（性能）
 
@@ -129,31 +127,47 @@ MVP 采用实时聚合；随用户增长升级到物化视图（见 [08](./08-ro
 ```
 POST /api/cron/settle
 for each market with (closed==true, resolvedOutcomeIndex==null in our DB, PM 已确定):
-  winner = resolvedOutcomeIndex (来自 PM)
+  outcome = classify(market)            # WIN(index) 或 VOID（见 §5.3）
   BEGIN TRANSACTION
     m = SELECT market FOR UPDATE
-    if m.resolvedOutcomeIndex != null: SKIP  # INV-5 幂等
-    m.resolvedOutcomeIndex = winner
+    if m.resolvedOutcomeIndex != null or m.voided: SKIP  # INV-5 幂等
+    if outcome == VOID:                              # 50-50/作废：全额退回成本
+      for each position p in market with shares > 0 or costBasis > 0:
+        refund = p.costBasis                         # 退回该持仓累计买入成本
+        user(p).balance += refund
+        insert trade(SETTLE, p.shares, priceBps=null, amount=+refund)  # VOID 退款
+        p.shares = 0; p.costBasis = 0
+      m.voided = true
+    else:                                            # 正常结算：赢家赔 1、输家归零
+      winner = outcome.index
+      m.resolvedOutcomeIndex = winner
+      for each position p in market with shares > 0:
+        if p.outcomeIndex == winner:
+          payout = p.shares                          # 每份赔 1 积分 = shares 厘份→厘（1:1）
+          user(p).balance += payout
+          insert trade(SETTLE, p.shares, priceBps=10000, amount=+payout)
+        else:
+          insert trade(SETTLE, p.shares, priceBps=0, amount=0)   # 失败方归零
+        p.shares = 0; p.costBasis = 0
     m.resolvedAt = now
-    for each position p in market with shares > 0:
-      if p.outcomeIndex == winner:
-        payout = p.shares               # 每份赔 1 积分 = shares 厘份→厘（1:1）
-        user(p).balance += payout
-        insert trade(SETTLE, p.shares, priceBps=10000, amount=+payout)
-      else:
-        insert trade(SETTLE, p.shares, priceBps=0, amount=0)   # 失败方归零
-      p.shares = 0
-      p.costBasis = 0
   COMMIT
 ```
 
-> **幂等（INV-5）**：以 `resolvedOutcomeIndex != null` 为已结算标志，二次运行直接跳过，杜绝重复赔付。
+> **幂等（INV-5）**：以 `resolvedOutcomeIndex != null`（正常结算）或 `voided == true`（VOID）为已结算标志，二次运行直接跳过，杜绝重复赔付/重复退款。
 >
 > **份额→积分**：1 份获胜赔 1 积分，即 `shares`（厘份）直接等值 `payout`（厘），单位对齐无需换算。
 
-### 5.3 50-50 特殊结算
+### 5.3 VOID 特殊结算（全额退回）
 
-Polymarket 部分市场规则含「若都未发生则 50-50」。此时 `outcomePrices=["0.5","0.5"]`。处理：两方持仓各按 `pBps=5000` 赔付（`payout = floor(shares × 5000 / 10000)`）。见[开放问题 Q3](./08-roadmap-and-open-questions.md)。
+Polymarket 部分市场规则含「若都未发生则 50-50」（此时 `outcomePrices=["0.5","0.5"]`），另有极少数市场被作废。二者本质都是**没有明确赢家**，本站统一按 **VOID 全额退回**处理（决策 Q3，[08 §4](./08-roadmap-and-open-questions.md#4-已确定的产品决策)）：
+
+- 把用户在该市场每个持仓的**累计买入成本 `costBasis` 全额退回**余额，视作这些下注未发生。
+- 记一笔 `SETTLE` 流水（`amount = +costBasis`，`priceBps=null`），并清零 `shares`/`costBasis`。
+- 市场置 `voided = true`（区别于正常结算的 `resolvedOutcomeIndex`）。
+
+**识别 VOID**（见 [03 §3](./03-polymarket-integration.md#3-结算信号识别)）：`closed==true` 且结算价为 `["0.5","0.5"]`，或 Polymarket 标记市场作废/`umaResolutionStatuses` 指示无效。
+
+> 相比「按 0.5 比例赔付」，全额退回对娱乐玩家更友好——多数人并非在 0.5 价位买入，比例赔付会让其平白亏损；且此类市场极少，单独一条退款分支成本可接受。
 
 ## 6. 边界与异常
 
@@ -164,14 +178,15 @@ Polymarket 部分市场规则含「若都未发生则 50-50」。此时 `outcome
 | **市场同步中途关闭** | 下注事务内二次校验 `closed`，已关则回滚。 |
 | **并发下注** | 行锁 / Serializable 保证串行化。 |
 | **前端展示价 vs 成交价偏差** | 前端提交时带 `expectedPriceBps`，服务端偏差超阈值（如 200bps）返回 409，用户重新确认（滑点保护）。 |
-| **市场从 Polymarket 消失** | 保留本站镜像；标 `active=false`，不可再下注；待结算或按 Q3 处理。 |
-| **用户余额为 0** | 允许继续持有/卖出；无法买入。破产补给见 [08](./08-roadmap-and-open-questions.md)。 |
+| **市场从 Polymarket 消失** | 保留本站镜像；标 `active=false`，不可再下注；待结算或按 VOID 全额退回（§5.3）。 |
+| **用户余额为 0** | 允许继续持有/卖出；无法买入。**无补给/重置**（决策 Q4），用完即止；用户可另注册新号。 |
 
-## 7. 测试要点（供 [test 阶段](./08-roadmap-and-open-questions.md) 参考）
+## 7. 测试要点
 
 - **积分守恒**：随机化大量买/卖/结算后断言 `Σbalance + Σ持仓市值 == 总发行`。
 - **舍入方向**：断言 floor 永不导致系统多发积分。
 - **结算幂等**：重复调用 settle 不重复赔付。
+- **VOID 退回**：50-50/作废市场触发全额退回 `costBasis`，守恒不破，且不与正常结算重复。
 - **并发**：并行买入同一用户，余额不会变负。
 - **边界价**：`pBps=0/10000` 不崩溃、不除零。
 - **过期赔率**：`STALE_PRICE` 正确拦截。

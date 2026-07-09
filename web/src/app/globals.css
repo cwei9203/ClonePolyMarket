@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+/*
+  ClonePolyMarket 设计系统 — 清新浅色主题
+  场景：白天办公室 / 通勤，快速扫概率、下注、看排名。
+  策略：Restrained —— 冷调中性浅底 + 一个承诺型品牌色（靛紫，区别于 Polymarket 蓝）。
+  语义色：Yes/涨/胜=绿，No/跌/负=红。数字等宽对齐。
+*/
+
+:root {
+  /* 背景层 —— 冷调近白，非纯白（更柔和有质感） */
+  --bg:             oklch(0.985 0.003 265);   /* 页面底 */
+  --surface:        oklch(1 0 0);             /* 卡片/面板：纯白浮起 */
+  --surface-sunken: oklch(0.968 0.004 265);   /* 内嵌区/表头 */
+  --border:         oklch(0.922 0.005 265);   /* 分隔线 */
+  --border-strong:  oklch(0.86 0.006 265);    /* 强调分隔 */
+
+  /* 文字 —— 高对比，正文绝不用浅灰 */
+  --ink:            oklch(0.24 0.02 275);     /* 主文字，对 surface ≥ 12:1 */
+  --ink-secondary:  oklch(0.44 0.02 275);     /* 次要文字，≥ 4.5:1 */
+  --ink-muted:      oklch(0.56 0.015 275);    /* 弱化，仅用于 ≥14px 非正文 */
+
+  /* 品牌主色：靛紫 */
+  --brand:          oklch(0.55 0.19 285);
+  --brand-hover:    oklch(0.49 0.2 285);
+  --brand-soft:     oklch(0.55 0.19 285 / 0.1);
+  --brand-ink:      oklch(0.99 0.005 285);    /* 品牌色上的文字 */
+
+  /* 语义：涨跌 / Yes-No / 胜负 */
+  --yes:            oklch(0.58 0.15 155);     /* Yes / 涨 / 胜 */
+  --yes-hover:      oklch(0.52 0.16 155);
+  --yes-soft:       oklch(0.58 0.15 155 / 0.12);
+  --no:             oklch(0.57 0.2 25);       /* No / 跌 / 负 */
+  --no-hover:       oklch(0.51 0.21 25);
+  --no-soft:        oklch(0.57 0.2 25 / 0.12);
+  --warning:        oklch(0.7 0.15 70);       /* 赔率过期 / 即将截止 */
+  --warning-soft:   oklch(0.7 0.15 70 / 0.14);
+
+  --focus-ring:     oklch(0.55 0.19 285 / 0.5);
+
+  /* 阴影：低扩散、冷调，克制 */
+  --shadow-sm: 0 1px 2px oklch(0.24 0.02 275 / 0.05);
+  --shadow-md: 0 2px 8px oklch(0.24 0.02 275 / 0.07), 0 1px 2px oklch(0.24 0.02 275 / 0.05);
+  --shadow-lg: 0 8px 28px oklch(0.24 0.02 275 / 0.1), 0 2px 6px oklch(0.24 0.02 275 / 0.06);
+
+  --radius: 0.75rem;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-yes: var(--yes);
+  --color-yes-hover: var(--yes-hover);
+  --color-yes-soft: var(--yes-soft);
+  --color-no: var(--no);
+  --color-no-hover: var(--no-hover);
+  --color-no-soft: var(--no-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-lg: var(--radius);
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+
+  /* 语义 z-index 阶梯 */
+  --z-dropdown: 10;
+  --z-sticky: 20;
+  --z-backdrop: 30;
+  --z-modal: 40;
+  --z-toast: 50;
+  --z-tooltip: 60;
+
+  /* 缓动：指数缓出，无 bounce */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans), system-ui, -apple-system, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 数字等宽对齐 —— 价格/概率/盈亏/余额 */
+.tnum {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+h1, h2, h3 {
+  text-wrap: balance;
+  letter-spacing: -0.02em;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 概率条填充过渡 */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.4s var(--ease-out-quart) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .animate-fade-up { animation: none; }
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 10px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
